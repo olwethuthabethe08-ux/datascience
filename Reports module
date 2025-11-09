@@ -1,0 +1,103 @@
+def show_course_report():
+    """
+    Displays a summary report (total courses, credits, and breakdown per instructor)
+    below the table using grid layout.
+    """
+    # Clear previous report
+    for widget in report_frame.winfo_children():
+        widget.destroy()
+
+    conn = sqlite3.connect("student_management.db")
+    cursor = conn.cursor()
+
+    # Summary information
+    cursor.execute("SELECT COUNT(*), SUM(credits), AVG(credits) FROM courses")
+    total_courses, total_credits, avg_credits = cursor.fetchone()
+
+    cursor.execute("SELECT instructor, COUNT(*) FROM courses GROUP BY instructor")
+    instructor_stats = cursor.fetchall()
+    conn.close()
+
+    # Header
+    tk.Label(report_frame, text="📊 Course Summary Report",
+             font=("Arial", 16, "bold"), bg="#f0f0f0").grid(row=0, column=0, columnspan=2, pady=10)
+
+    # Summary
+    tk.Label(report_frame, text="Total Courses:", font=("Arial", 12, "bold"), bg="#f0f0f0").grid(row=1, column=0, sticky="e", padx=10)
+    tk.Label(report_frame, text=total_courses or 0, font=("Arial", 12), bg="#f0f0f0").grid(row=1, column=1, sticky="w")
+
+    tk.Label(report_frame, text="Total Credits:", font=("Arial", 12, "bold"), bg="#f0f0f0").grid(row=2, column=0, sticky="e", padx=10)
+    tk.Label(report_frame, text=total_credits or 0, font=("Arial", 12), bg="#f0f0f0").grid(row=2, column=1, sticky="w")
+
+    tk.Label(report_frame, text="Average Credits per Course:", font=("Arial", 12, "bold"), bg="#f0f0f0").grid(row=3, column=0, sticky="e", padx=10)
+    tk.Label(report_frame, text=round(avg_credits, 2) if avg_credits else 0, font=("Arial", 12), bg="#f0f0f0").grid(row=3, column=1, sticky="w")
+
+    # Separator
+    tk.Label(report_frame, text="-" * 50, bg="#f0f0f0").grid(row=4, column=0, columnspan=2, pady=5)
+
+    # Breakdown by instructor
+    tk.Label(report_frame, text="Courses per Instructor", font=("Arial", 13, "bold"), bg="#f0f0f0").grid(row=5, column=0, columnspan=2, pady=10)
+
+    tk.Label(report_frame, text="Instructor", bg="#FFB6C1", font=("Arial", 12, "bold"), width=20).grid(row=6, column=0, padx=5, pady=5)
+    tk.Label(report_frame, text="Course Count", bg="#FFB6C1", font=("Arial", 12, "bold"), width=20).grid(row=6, column=1, padx=5, pady=5)
+
+    if instructor_stats:
+        for i, (instructor, count) in enumerate(instructor_stats, start=7):
+            tk.Label(report_frame, text=instructor or "Unknown", bg="#f0f0f0", font=("Arial", 12)).grid(row=i, column=0, pady=3)
+            tk.Label(report_frame, text=count, bg="#f0f0f0", font=("Arial", 12)).grid(row=i, column=1, pady=3)
+    else:
+        tk.Label(report_frame, text="No data available", bg="#f0f0f0", font=("Arial", 12)).grid(row=7, column=0, columnspan=2, pady=5)
+
+
+
+# MAIN WINDOW (GRID LAYOUT)
+
+root = tk.Tk()
+root.title("Course Management System with Reports")
+root.geometry("750x600")
+root.config(bg="#f5f5f5")
+
+# Title
+tk.Label(root, text="📚 Course Management System", font=("Arial", 18, "bold"), bg="#f5f5f5").grid(row=0, column=0, columnspan=4, pady=10)
+
+# Form fields
+tk.Label(root, text="Course Name:", bg="#f5f5f5").grid(row=1, column=0, sticky="e", padx=10, pady=5)
+entry_name = tk.Entry(root, width=25); entry_name.grid(row=1, column=1, pady=5)
+
+tk.Label(root, text="Course Code:", bg="#f5f5f5").grid(row=2, column=0, sticky="e", padx=10, pady=5)
+entry_code = tk.Entry(root, width=25); entry_code.grid(row=2, column=1, pady=5)
+
+tk.Label(root, text="Instructor:", bg="#f5f5f5").grid(row=1, column=2, sticky="e", padx=10, pady=5)
+entry_instructor = tk.Entry(root, width=25); entry_instructor.grid(row=1, column=3, pady=5)
+
+tk.Label(root, text="Credits:", bg="#f5f5f5").grid(row=2, column=2, sticky="e", padx=10, pady=5)
+entry_credits = tk.Entry(root, width=25); entry_credits.grid(row=2, column=3, pady=5)
+
+# Buttons
+tk.Button(root, text="Add Course", command=on_add, bg="#FF007F", fg="white").grid(row=3, column=0, pady=10)
+tk.Button(root, text="Update Course", command=on_update, bg="#FFB6C1", fg="white").grid(row=3, column=1, pady=10)
+tk.Button(root, text="Delete Course", command=on_delete, bg="#FF69B4", fg="white").grid(row=3, column=2, pady=10)
+tk.Button(root, text="Clear Fields", command=clear_fields, bg="#FF00FF", fg="white").grid(row=3, column=3, pady=10)
+
+# Report Button
+tk.Button(root, text="Show Report", command=show_course_report, bg="#DB7093", fg="white").grid(row=4, column=0, columnspan=4, pady=10)
+
+# Table
+columns = ("ID", "Name", "Code", "Instructor", "Credits")
+course_table = ttk.Treeview(root, columns=columns, show='headings')
+for col in columns:
+    course_table.heading(col, text=col)
+    course_table.column(col, width=120, anchor="center")
+
+course_table.grid(row=5, column=0, columnspan=4, padx=10, pady=10)
+
+# Report Frame
+report_frame = tk.Frame(root, bg="#f0f0f0", relief="groove", bd=2)
+report_frame.grid(row=6, column=0, columnspan=4, padx=10, pady=10, sticky="nsew")
+
+# Initialize database and data
+init_db()
+view_courses()
+
+root.mainloop()
+
