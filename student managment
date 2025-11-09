@@ -1,0 +1,310 @@
+import os
+import shutil
+import sqlite3
+from tkinter import (
+    Tk, Frame, Label, Entry, Button, StringVar,
+    filedialog, messagebox, LEFT, RIGHT, BOTH, X, Y, TOP
+)
+from tkinter.ttk import Treeview, Scrollbar, Style
+from PIL import Image, ImageTk
+
+# Database and image directory
+DATABASE = "Student.dataBase"
+IMAGES_DIRNAME = "StudentImages"
+
+class Student_Management:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Student Management Module")
+        self.root.geometry("900x600")
+
+        # Ensure images directory exists
+        os.makedirs(IMAGES_DIRNAME, exist_ok=True)
+
+        # Database connection
+        self.conn = sqlite3.connect(DATABASE)
+        self.create_table()
+
+        # Variables
+        self.var_student_id = StringVar()
+        self.var_first_name = StringVar()
+        self.var_last_name = StringVar()
+        self.var_email = StringVar()
+        self.photo_path = None  # Original photo path
+
+        # UI
+        self.build_form_ui()
+        self.build_treeview_ui()
+        self.load_students()
+
+    def create_table(self):
+        cur = self.conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT UNIQUE NOT NULL,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                email TEXT,
+                photo_path TEXT
+            )
+        """)
+        self.conn.commit()
+
+    def build_form_ui(self):
+        frame = Frame(self.root, padx=15, pady=15)
+        frame.pack(side=TOP, fill=X)
+
+        # Row 0
+        Label(frame, text="Student ID:").grid(row=0, column=0, sticky="w", pady=2)
+        Entry(frame, textvariable=self.var_student_id).grid(row=0, column=1, sticky="w", padx=5, pady=2)
+
+        # Row 1
+        Label(frame, text="First Name:").grid(row=1, column=0, sticky="w", pady=2)
+        Entry(frame, textvariable=self.var_first_name).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        # Row 2
+        Label(frame, text="Last Name:").grid(row=2, column=0, sticky="w", pady=2)
+        Entry(frame, textvariable=self.var_last_name).grid(row=2, column=1, sticky="w", padx=5, pady=2)
+
+        # Row 3
+        Label(frame, text="Email:").grid(row=3, column=0, sticky="w", pady=2)
+        Entry(frame, textvariable=self.var_email).grid(row=3, column=1, sticky="w", padx=5, pady=2)
+
+        # Photo upload button
+        btn_photo = Button(frame, text="Pick Image", command=self.choose_image)
+        btn_photo.grid(row=0, column=2, rowspan=4, padx=10, pady=2)
+
+        # Photo preview
+        self.photo_preview_label = Label(frame, text="No Image", width=20, height=10, relief="sunken", bg="white")
+        self.photo_preview_label.grid(row=0, column=3, rowspan=4, padx=10, pady=2)
+
+        # Action buttons
+        Button(frame, text="Add Student", command=self.add_student, width=12).grid(row=0, column=4, padx=5, pady=2)
+        Button(frame, text="Update Student", command=self.update_student, width=12).grid(row=1, column=4, padx=5, pady=2)
+        Button(frame, text="Delete Student", command=self.delete_student, width=12).grid(row=2, column=4, padx=5, pady=2)
+        Button(frame, text="Clear Form", command=self.clear_form, width=12).grid(row=3, column=4, padx=5, pady=2)
+
+        # Search
+        Label(frame, text="Search:").grid(row=4, column=0, sticky="w", pady=(15, 0))
+        self.search_var = StringVar()
+        Entry(frame, textvariable=self.search_var).grid(row=4, column=1, sticky="w", padx=5, pady=(15, 0))
+        Button(frame, text="Search", command=self.search_students).grid(row=4, column=2, padx=5, pady=(15, 0))
+        Button(frame, text="Show All", command=self.load_students).grid(row=4, column=3, padx=5, pady=(15, 0))
+
+    def build_treeview_ui(self):
+        tree_frame = Frame(self.root)
+        tree_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
+
+        columns = ("student_id", "first_name", "last_name", "email", "photo")
+        self.tree = Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+
+        headings = ("Student ID", "First Name", "Last Name", "Email", "Photo Path")
+        for col, heading in zip(columns, headings):
+            self.tree.heading(col, text=heading)
+            self.tree.column(col, anchor="center", width=120 if col != "photo" else 200)
+
+        # Scrollbar
+        vsb = Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=RIGHT, fill=Y)
+        self.tree.pack(side=LEFT, fill=BOTH, expand=True)
+
+        # Bind selection
+        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
+
+        # Style
+        style = Style()
+        style.configure("Treeview.Heading", font=("Arial", 10, "bold"))
+
+    def choose_image(self):
+        path = filedialog.askopenfilename(
+            title="Choose Student Image",
+            filetypes=[("Image files", "*.jpg *.jpeg *.png *.gif *.bmp")]
+        )
+        if path:
+            self.photo_path = path
+            self.show_photo_preview(path)
+
+    def show_photo_preview(self, path):
+        try:
+            img = Image.open(path)
+            img.thumbnail((150, 150))
+            self._photo_tk = ImageTk.PhotoImage(img)  # Keep reference
+            self.photo_preview_label.config(image=self._photo_tk, text="")
+        except Exception as e:
+            self.photo_preview_label.config(image="", text="Error")
+            print(f"Preview error: {e}")
+
+    def add_student(self):
+        student_id = self.var_student_id.get().strip()
+        first_name = self.var_first_name.get().strip()
+        last_name = self.var_last_name.get().strip()
+        email = self.var_email.get().strip()
+
+        if not student_id or not first_name or not last_name:
+            messagebox.showwarning("Validation", "Student ID, First Name, Last Name are required.")
+            return
+
+        photo_dest = None
+        if self.photo_path:
+            ext = os.path.splitext(self.photo_path)[1].lower()
+            photo_dest = os.path.join(IMAGES_DIRNAME, f"{student_id}{ext}")
+            try:
+                shutil.copy2(self.photo_path, photo_dest)
+            except Exception as e:
+                messagebox.showerror("Image Error", f"Failed to copy image: {e}")
+                return
+
+        try:
+            cur = self.conn.cursor()
+            cur.execute("""
+                INSERT INTO students (student_id, first_name, last_name, email, photo_path)
+                VALUES (?, ?, ?, ?, ?)
+            """, (student_id, first_name, last_name, email, photo_dest))
+            self.conn.commit()
+            messagebox.showinfo("Success", "Student added successfully.")
+            self.load_students()
+            self.clear_form()
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Duplicate", "Student ID already exists.")
+        except Exception as e:
+            messagebox.showerror("Database Error", str(e))
+
+    def update_student(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Select", "Please select a student to update.")
+            return
+
+        row_id = sel[0]
+        old_student_id = self.tree.item(row_id, "values")[0]
+
+        student_id = self.var_student_id.get().strip()
+        first_name = self.var_first_name.get().strip()
+        last_name = self.var_last_name.get().strip()
+        email = self.var_email.get().strip()
+
+        if not student_id or not first_name or not last_name:
+            messagebox.showwarning("Validation", "Student ID, First Name, Last Name are required.")
+            return
+
+        photo_dest = self.tree.item(row_id, "values")[4]  # Old photo
+        if self.photo_path and self.photo_path != photo_dest:
+            ext = os.path.splitext(self.photo_path)[1].lower()
+            photo_dest = os.path.join(IMAGES_DIRNAME, f"{student_id}{ext}")
+            try:
+                shutil.copy2(self.photo_path, photo_dest)
+            except Exception as e:
+                messagebox.showerror("Image Error", f"Failed to update image: {e}")
+                return
+
+        try:
+            cur = self.conn.cursor()
+            cur.execute("""
+                UPDATE students SET student_id=?, first_name=?, last_name=?, email=?, photo_path=?
+                WHERE student_id=?
+            """, (student_id, first_name, last_name, email, photo_dest, old_student_id))
+            self.conn.commit()
+            messagebox.showinfo("Success", "Student updated.")
+            self.load_students()
+            self.clear_form()
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Duplicate", "Student ID already exists.")
+        except Exception as e:
+            messagebox.showerror("Database Error", str(e))
+
+    def delete_student(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Select", "Please select a student to delete.")
+            return
+
+        row_id = sel[0]
+        student_id = self.tree.item(row_id, "values")[0]
+        if not messagebox.askyesno("Confirm", f"Delete student {student_id}?"):
+            return
+
+        photo_path = self.tree.item(row_id, "values")[4]
+        if photo_path and os.path.exists(photo_path):
+            try:
+                os.remove(photo_path)
+            except:
+                pass
+
+        try:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM students WHERE student_id=?", (student_id,))
+            self.conn.commit()
+            messagebox.showinfo("Deleted", "Student deleted.")
+            self.load_students()
+            self.clear_form()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def load_students(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        cur = self.conn.cursor()
+        cur.execute("SELECT student_id, first_name, last_name, email, photo_path FROM students")
+        rows = cur.fetchall()
+        for row in rows:
+            self.tree.insert("", "end", values=row)
+
+    def search_students(self):
+        query = self.search_var.get().strip()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        if not query:
+            self.load_students()
+            return
+
+        pattern = f"%{query}%"
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT student_id, first_name, last_name, email, photo_path FROM students
+            WHERE student_id LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR email LIKE ?
+        """, (pattern, pattern, pattern, pattern))
+        rows = cur.fetchall()
+        for row in rows:
+            self.tree.insert("", "end", values=row)
+
+    def on_tree_select(self, event):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        values = self.tree.item(sel[0], "values")
+        student_id, first_name, last_name, email, photo = values
+
+        self.var_student_id.set(student_id)
+        self.var_first_name.set(first_name)
+        self.var_last_name.set(last_name)
+        self.var_email.set(email or "")
+        self.photo_path = photo  # Keep original
+
+        if photo and os.path.exists(photo):
+            self.show_photo_preview(photo)
+        else:
+            self.photo_preview_label.config(image="", text="No Image")
+
+    def clear_form(self):
+        self.var_student_id.set("")
+        self.var_first_name.set("")
+        self.var_last_name.set("")
+        self.var_email.set("")
+        self.photo_path = None
+        self.photo_preview_label.config(image="", text="No Image")
+
+    def on_close(self):
+        try:
+            self.conn.close()
+        finally:
+            self.root.destroy()
+
+
+if __name__ == "__main__":
+    root = Tk()
+    app = Student_Management(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    root.mainloop()
