@@ -1,6 +1,108 @@
 import sqlite3
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+import os
+
+
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = "your_email@gmail.com"
+SENDER_PASSWORD = "your_app_password_here"
+
+def send_email(receiver_email, subject, body, attachment_path=None):
+    """Generic helper to send an email. """
+    msg = MIMEMultipart()
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = receiver_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    if attachment_path:
+        try:
+            with open(attachment_path, "rb") as f:
+                part = MIMEApplication(f.read(), Name=os.path.basename(attachment_path))
+                part['Content-Disposition'] = f'attachment; filename="{os.path.basename(attachment_path)}"'
+                msg.attach(part)
+        except Exception as e:
+            print(f"Attachment error: {e}")
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
+        print(f"Email successfully sent to {receiver_email}")
+        return True
+    except Exception as e:
+        print(f"Failed to send email to {receiver_email}: {e}")
+        return False
+
+# Specific email functions requested
+def send_welcome_email(student_name, student_email, course_name):
+    subject = f"Welcome to {course_name}!"
+    body = f"""Dear {student_name},
+
+Welcome to {course_name}! We're excited to have you in the course.
+Your instructor will contact you shortly with course materials and schedules.
+
+Best regards,
+Course Management Team
+"""
+    return send_email(student_email, subject, body)
+
+def send_grade_report_email(student_name, student_email, grades_dict):
+    subject = "Your Grade Report"
+    if not grades_dict:
+        body = f"Hello {student_name},\n\nNo grades are available at this time.\n\nRegards,\nAcademic Office"
+    else:
+        grades_text = "\n".join([f"{course}: {grade}" for course, grade in grades_dict.items()])
+        body = f"""Hello {student_name},
+
+Here is your latest grade report:
+
+{grades_text}
+
+Best regards,
+Academic Office
+"""
+    return send_email(student_email, subject, body)
+
+def send_bulk_announcement(subject, message):
+    """Send an announcement email to all students present in students table."""
+    try:
+        conn = sqlite3.connect("student_management.db")
+        cur = conn.cursor()
+        cur.execute("SELECT name, email FROM students")
+        students = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        print("Failed to load students for bulk email:", e)
+        return False
+
+    success_count = 0
+    for name, email in students:
+        body = f"Hello {name},\n\n{message}\n\n— Course Management System"
+        if send_email(email, subject, body):
+            success_count += 1
+    print(f"Bulk announcement sent to {success_count}/{len(students)} students.")
+    return True
+
+def send_transcript_email(student_name, student_email, file_path):
+    subject = "Your Transcript / Certificate"
+    body = f"""Hello {student_name},
+
+Please find attached your transcript / certificate.
+
+Best regards,
+Academic Records Office
+"""
+    return send_email(student_email, subject, body, attachment_path=file_path)
+
+
 
 def init_db():
     conn = sqlite3.connect("student_management.db")
@@ -24,6 +126,15 @@ def init_db():
             -- we don't enforce FK here to keep it simple and avoid errors if other modules aren't loaded
         )
     ''')
+    # students table: keep minimal schema with name + email (the app expects this)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS students (
+            student_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            email TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -142,6 +253,23 @@ def assign_student_to_course():
         cursor.execute("INSERT INTO student_courses (student_id, course_id) VALUES (?, ?)",
                        (student_id, course_id))
         conn.commit()
+
+
+        # Fetch student email and name for notification
+        cursor.execute("SELECT name, email FROM students WHERE student_id=?", (student_id,))
+        student = cursor.fetchone()
+        cursor.execute("SELECT course_name FROM courses WHERE course_id=?", (course_id,))
+        course_row = cursor.fetchone()
+        if student and course_row:
+            student_name, student_email = student
+            course_name = course_row[0]
+            # send welcome email
+            try:
+                send_welcome_email(student_name, student_email, course_name)
+            except Exception as e:
+                print("Welcome email failed:", e)
+        # ### >>> END EMAIL SECTION <<<
+
         conn.close()
         messagebox.showinfo("Assigned", f"Student {student_id} assigned to Course {course_id}.")
         view_assignments()
@@ -194,6 +322,100 @@ def remove_assignment():
         view_assignments()
     except Exception as e:
         messagebox.showerror("Error", f"Failed to remove assignment: {e}")
+
+# -------------------- Additional Email-related UI actions --------------------
+
+def open_bulk_announcement_popup():
+    win = tk.Toplevel(root)
+    win.title("Send Bulk Announcement")
+    win.geometry("500x350")
+
+    tk.Label(win, text="Subject:").pack(anchor='w', padx=8, pady=(8,2))
+    subj = tk.Entry(win, width=70)
+    subj.pack(padx=8)
+
+    tk.Label(win, text="Message:").pack(anchor='w', padx=8, pady=(8,2))
+    msg = tk.Text(win, width=70, height=12)
+    msg.pack(padx=8, pady=(0,8))
+
+    def do_send():
+        subject = subj.get().strip()
+        message = msg.get("1.0", tk.END).strip()
+        if not subject or not message:
+            messagebox.showwarning("Input Error", "Please enter subject and message.")
+            return
+        try:
+            send_bulk_announcement(subject, message)
+            messagebox.showinfo("Sent", "Bulk announcement sent (check console for status).")
+            win.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Bulk send failed: {e}")
+
+    tk.Button(win, text="Send Announcement", command=do_send, bg="#2196F3", fg="white").pack(pady=6)
+
+def send_grade_report_for_selected():
+    selected = assignments_table.selection()
+    if not selected:
+        messagebox.showwarning("Selection Error", "Please select an assignment (or student) first.")
+        return
+    vals = assignments_table.item(selected[0])['values']
+    # vals are (assignment id, "studentid - studentname", "courseid - coursename")
+    student_text = vals[1]
+    student_id = int(student_text.split(" - ")[0])
+    # Attempt to fetch student info and grades (best-effort)
+    try:
+        conn = sqlite3.connect("student_management.db")
+        cur = conn.cursor()
+        cur.execute("SELECT name, email FROM students WHERE student_id=?", (student_id,))
+        student = cur.fetchone()
+        # Try a 'grades' table if exists (best-effort). If not present, use course info and unknown grade.
+        grades = {}
+        try:
+            cur.execute("SELECT course, grade FROM grades WHERE student_id=?", (student_id,))
+            grade_rows = cur.fetchall()
+            if grade_rows:
+                for course, grade in grade_rows:
+                    grades[course] = grade
+        except Exception:
+            # No grades table — try to pull course name from the assignment context and show N/A
+            course_text = vals[2]
+            course_name = course_text.split(" - ", 1)[1] if " - " in course_text else course_text
+            grades[course_name] = "N/A"
+        conn.close()
+        if student:
+            student_name, student_email = student
+            send_grade_report_email(student_name, student_email, grades)
+            messagebox.showinfo("Sent", f"Grade report sent to {student_name} (if email config OK).")
+        else:
+            messagebox.showerror("Error", "Student info not found.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to send grade report: {e}")
+
+def send_transcript_for_selected():
+    selected = assignments_table.selection()
+    if not selected:
+        messagebox.showwarning("Selection Error", "Please select an assignment (or student) first.")
+        return
+    vals = assignments_table.item(selected[0])['values']
+    student_text = vals[1]
+    student_id = int(student_text.split(" - ")[0])
+    try:
+        conn = sqlite3.connect("student_management.db")
+        cur = conn.cursor()
+        cur.execute("SELECT name, email FROM students WHERE student_id=?", (student_id,))
+        student = cur.fetchone()
+        conn.close()
+        if not student:
+            messagebox.showerror("Error", "Student info not found.")
+            return
+        student_name, student_email = student
+        # Ask user to choose file (transcript)
+        file_path = filedialog.askopenfilename(title="Select transcript/certificate", filetypes=[("PDF files","*.pdf"),("All files","*.*")])
+        if file_path:
+            send_transcript_email(student_name, student_email, file_path)
+            messagebox.showinfo("Sent", f"Transcript sent to {student_name} (if email config OK).")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to send transcript: {e}")
 
 def clear_fields():
     entry_name.delete(0, tk.END)
@@ -291,6 +513,13 @@ for col in assign_cols:
     assignments_table.column(col, width=250)
 assignments_table.pack(fill='both', expand=False, padx=10, pady=5)
 
+# EMAIL feature buttons (kept small and non-intrusive under assignments)
+email_buttons_frame = tk.Frame(root, bg="#f5f5f5")
+email_buttons_frame.pack(fill='x', padx=10)
+tk.Button(email_buttons_frame, text="Send Grade Report (selected)", command=send_grade_report_for_selected, bg="#00BCD4", fg="white").pack(side='left', padx=6, pady=6)
+tk.Button(email_buttons_frame, text="Send Transcript (selected)", command=send_transcript_for_selected, bg="#FFA726", fg="white").pack(side='left', padx=6, pady=6)
+tk.Button(email_buttons_frame, text="Send Bulk Announcement", command=open_bulk_announcement_popup, bg="#9C27B0", fg="white").pack(side='left', padx=6, pady=6)
+
 tk.Button(root, text="Remove Selected Assignment", command=remove_assignment, bg="#f44336", fg="white").pack(pady=6)
 
 init_db()
@@ -300,3 +529,4 @@ load_students_into_combobox()
 view_assignments()
 
 root.mainloop()
+
